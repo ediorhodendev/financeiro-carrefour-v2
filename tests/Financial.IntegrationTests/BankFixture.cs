@@ -28,15 +28,15 @@ public sealed class BankFixture : IAsyncLifetime
         ["ConnectionStrings:Bank"]=Postgres.GetConnectionString(),["Jwt:SigningKey"]=Convert.ToHexString(RandomNumberGenerator.GetBytes(64)),
         ["Demo:Enabled"]="true",["Messaging:Enabled"]="false",["Protection:KeyPath"]=Path.Combine(Path.GetTempPath(),"bank-tests-"+Guid.NewGuid()),
         ["Messaging:Host"]=Rabbit.Hostname,["Messaging:Port"]=Rabbit.GetMappedPublicPort(5672).ToString(),["Messaging:User"]="bank",["Messaging:Password"]="integration-only-password"};
-    Ledger=new WebApplicationFactory<LedgerHost::Program>().WithWebHostBuilder(b=>b.UseEnvironment("Development").ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(settings)));
+    Ledger=new WebApplicationFactory<LedgerHost::Program>().WithWebHostBuilder(b=>{b.UseEnvironment("Development");foreach(var item in settings)b.UseSetting(item.Key,item.Value!);});
     using(var scope=Ledger.Services.CreateScope())
     {
         var db=scope.ServiceProvider.GetRequiredService<LedgerDbContext>();await db.Database.MigrateAsync();
         db.Accounts.Add(new Account(Guid.Parse("c90a3c2c-cdeb-4df0-85cb-d1a299a0d101"),"demo-customer",DateTimeOffset.UtcNow));await db.SaveChangesAsync();
     }
-    Balance=new WebApplicationFactory<BalanceHost::Program>().WithWebHostBuilder(b=>b.UseEnvironment("Development").ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(settings)));
+    Balance=new WebApplicationFactory<BalanceHost::Program>().WithWebHostBuilder(b=>{b.UseEnvironment("Development");foreach(var item in settings)b.UseSetting(item.Key,item.Value!);});
  }
- public async Task DisposeAsync(){await Ledger.DisposeAsync();await Balance.DisposeAsync();await Rabbit.DisposeAsync();await Postgres.DisposeAsync();}
+ public async Task DisposeAsync(){if(Ledger is not null)await Ledger.DisposeAsync();if(Balance is not null)await Balance.DisposeAsync();await Rabbit.DisposeAsync();await Postgres.DisposeAsync();}
  public async Task<HttpClient> ClientAsync()
  {
     var client=Ledger.CreateClient();var response=await client.PostAsync("/demo/access",null);
