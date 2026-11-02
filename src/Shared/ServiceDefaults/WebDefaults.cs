@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using OpenTelemetry.Metrics;
@@ -91,13 +92,16 @@ public static class WebDefaults
     if(app.Environment.IsDevelopment()){app.MapOpenApi();app.MapScalarApiReference();}
  }
 }
-public sealed class SafeExceptionHandler(IProblemDetailsService problems) : IExceptionHandler
+public sealed class SafeExceptionHandler(IProblemDetailsService problems,ILogger<SafeExceptionHandler> log) : IExceptionHandler
 {
  public async ValueTask<bool> TryHandleAsync(HttpContext http,Exception error,CancellationToken ct)
  {
     if(error is OperationCanceledException && ct.IsCancellationRequested)return false;
     var name=error.GetType().Name;
-    var status=error is ArgumentException?400:name=="ResourceMissing"?404:name=="RuleViolation"?409:503;
+    var sqlState=(error.GetBaseException() as System.Data.Common.DbException)?.SqlState;
+    log.LogWarning("Request failure {ErrorType} inner={InnerErrorType} sqlState={SqlState}",name,error.GetBaseException().GetType().Name,sqlState);
+    var status=error is ArgumentException?400:name=="ResourceMissing"?404:name=="RuleViolation"||sqlState=="55P03"?409:503;
+    if(sqlState=="55P03")http.Response.Headers.RetryAfter="1";
     http.Response.StatusCode=status;
     return await problems.TryWriteAsync(new(){HttpContext=http,ProblemDetails=new(){Status=status,Title=status switch{400=>"Invalid request.",404=>"Resource not found.",409=>"Operation conflicts with financial rules.",_=>"Service temporarily unavailable; retry safely."},Detail=status is 400 or 409?error.Message:null}});
  }
