@@ -4,6 +4,27 @@ Desafio de ledger financeiro em C# 14 / .NET 10, desenvolvido para demonstrar de
 
 Não substitui nem altera o projeto financeiro-carrefour anterior.
 
+## Por que esta arquitetura foi escolhida
+
+A v2 separa **correção financeira** de **distribuição dos dados para leitura**. O Ledger autoriza os débitos usando seu saldo transacional; o Balance oferece consultas sem participar da decisão de gastar. Assim, o processamento assíncrono pode atrasar sem permitir um débito com base em saldo desatualizado.
+
+| Escolha | Problema resolvido e custo assumido |
+|---|---|
+| Monólito modular com três processos | Contextos com responsabilidades explícitas no mesmo repositório e banco com schemas separados. Permite separar execução de escrita, leitura e consumo, com mais componentes para operar. Não são microsserviços independentes. |
+| Controllers e `[ApiController]` | Atendem ao requisito do desafio e oferecem organização por actions, model binding e validação do contrato HTTP. Regras financeiras permanecem nos handlers e no domínio. |
+| Clean Architecture e DI | Domínio não depende de HTTP, EF ou RabbitMQ. Aplicação define contratos; infraestrutura implementa. Isso permite testar regras sem depender do transporte. |
+| CQRS leve, EF Core na escrita e Dapper na leitura | Escrita usa entidades e transação; leitura usa projeções SQL explícitas. Não exige MediatR, nem pressupõe ganho de desempenho sem medição. |
+| Lock pessimista por conta | Serializa operações da mesma conta para impedir decisões concorrentes sobre o mesmo saldo. Contas muito disputadas podem esperar ou receber conflito transitório; os tempos de espera são limitados. |
+| Ledger append-only e estorno | Preserva evidência da original. A correção é outro lançamento, com vínculo e regras de saldo; histórico anterior não é reescrito. |
+| ActionFilter idempotente | Mantém o mecanismo de replay fora da regra financeira, mas dentro da mesma transação que confirma a operação e sua resposta. Índice único protege a corrida entre requisições. |
+| Transactional Outbox e RabbitMQ | Evitam o intervalo desprotegido entre confirmar no banco e tentar publicar um evento. A entrega pode se repetir; a inbox torna o efeito do consumidor idempotente. |
+| Projeção contígua e snapshots | Eventos fora de ordem são armazenados sem expor um saldo com lacunas. Snapshots reduzem o trecho de histórico a agregar; a leitura continua eventual. |
+| Pools limitados e compartilhados | Ledger compartilha o DataSource entre EF e Outbox; limites de 40/20/20 deixam reserva no banco para uma instância de cada processo. Réplicas exigem recalcular o orçamento global. |
+
+A transação de escrita confirma **saldo autoritativo + lançamento + Outbox + resposta idempotente**. O consumidor confirma **inbox + evento projetado + avanço de saldo/snapshots** em sua própria transação. Não há transação distribuída entre PostgreSQL e RabbitMQ nem promessa de transporte exatamente uma vez.
+
+A opção por três processos demonstra recuperação e independência de execução, mas acrescenta consistência eventual e trabalho operacional. Para um escopo menor com consulta imediatamente consistente no mesmo banco, a [versão 1](https://github.com/ediorhodendev/financeiro-carrefour) é uma alternativa mais simples. Os contratos das duas versões diferem; use o README correspondente. As justificativas completas e alternativas descartadas estão em [docs/adr](docs/adr/).
+
 ## Executar
 
 Pré-requisito: Docker Desktop com containers Linux e Compose v2, ou Docker Engine com Compose v2. Na raiz:
@@ -141,6 +162,232 @@ Logs Serilog em JSON não incluem bodies, JWTs, query strings nem identificadore
 
 JWT por escopo, propriedade em cada acesso, rate limiting e ProblemDetails. Fora de Development exige uma autoridade JWT real. Consulte as limitações de segurança e operação nos documentos.
 
+## Roteiro manual de avaliação: payloads e resultados esperados
+
+### Preparação sem apagar dados anteriores
+
+1. Suba o Compose e abra o Scalar de escrita em http://localhost:5081/scalar/v1.
+2. Execute `POST /demo/access` sem body e copie `token` e `accountId`.
+3. Configure Bearer com esse token no Scalar de escrita **e** no Scalar de leitura em http://localhost:5082/scalar/v1.
+4. Para reproduzir os valores abaixo, abra **uma conta nova** com `POST /api/v1/contas`, sem body e com o token. Copie o `id` retornado como `contaId` para todos os testes seguintes. A conta demonstrativa pode ter saldo de testes anteriores.
+5. No terminal, se preferir curl, defina `TOKEN` e `ACCOUNT_ID` com os valores reais. Gere chaves novas se repetir o roteiro em uma conta já usada.
+
+O cadastro retorna `201`. Uma conta nova ainda não tem projeção: antes do primeiro evento, o GET de saldo por conta pode retornar `404`. Isso é uma limitação explicitada desta implementação, não evidência de que o cadastro falhou.
+
+### 1. Crédito de 100
+
+Na Ledger.Api, use `POST /api/v1/contas/{contaId}/lancamentos` com `Idempotency-Key: credit-test-001`:
+
+```json
+{
+  "tipo": "Credito",
+  "valor": 100,
+  "descricao": "Credito inicial de teste",
+  "referenciaExterna": "TEST-001"
+}
+```
+
+Espere `201`, `type: 1`, `amount: 100` e `sequence: 1`. Guarde `id`, `sequence` e `registeredAt`. O formato de entrada é `tipo`/`valor`; as respostas usam `type`/`amount`.
+
+### 2. Replay idempotente e conflito de conteúdo
+
+Reenvie **exatamente** o mesmo body, na mesma conta e com `credit-test-001`:
+
+- Espere novamente `201`, com o mesmo corpo, ID, sequência e horário originais.
+- O header `Idempotency-Replayed: true` identifica a repetição.
+- Não deve surgir outro lançamento nem outro crédito.
+
+Mantenha essa chave e altere somente `valor` para 101: espere `422` com ProblemDetails. O crédito original continua sendo o único registrado. Diferentemente da v1, replay concluído na v2 preserva o status original `201`; o hash usa o body bruto, portanto mudanças de espaços/ordem das propriedades também conflitam.
+
+### 3. Débito de 30
+
+No mesmo endpoint, com `Idempotency-Key: debit-test-001`:
+
+```json
+{
+  "tipo": "Debito",
+  "valor": 30,
+  "descricao": "Debito de teste",
+  "referenciaExterna": "TEST-002"
+}
+```
+
+Espere `201`, `type: 2`, `amount: 30` e `sequence: 2`. Guarde o **ID desse débito**, seu `registeredAt` e a sequência.
+
+### 4. Saldo atual, histórico e extrato
+
+Na Balance.Api, execute `GET /api/v1/contas/{contaId}/saldo`, deixando `em` vazio. Após o consumo dos eventos, espere:
+
+```json
+{
+  "accountId": "c90a3c2c-cdeb-4df0-85cb-d1a299a0d101",
+  "currency": "BRL",
+  "amount": 70.0000,
+  "at": null,
+  "lastSequence": 2,
+  "processedAt": "2026-11-02T23:04:38.373059+00:00"
+}
+```
+
+O ID e o horário acima são ilustrativos; a conta nova terá outro ID. Compare `lastSequence` com a sequência do débito. Se ainda for menor, aguarde e repita: o POST confirma a escrita, não a atualização imediata da leitura.
+
+Para histórico, preencha `em` com o `registeredAt` real do crédito, incluindo `Z` ou `+00:00`. Se esse instante for anterior ao débito, espere saldo 100. A comparação é inclusiva; lançamentos com o mesmo instante também entram. Não use uma data fictícia anterior à abertura.
+
+Para o extrato, execute:
+
+```text
+GET /api/v1/contas/{contaId}/extrato?pagina=1&tamanho=1
+```
+
+Espere o crédito na primeira página e o débito em `pagina=2`, depois de a projeção alcançar a sequência 2. Opcionalmente filtre `de` e `ate` com instantes UTC reais. `pagina=0` ou `tamanho=101` retorna `400`. A v2 usa página/tamanho; não recebe o cursor da v1.
+
+Exemplos curl de consulta:
+
+```sh
+curl -sS "http://localhost:5082/api/v1/contas/$ACCOUNT_ID/saldo" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -sS -G "http://localhost:5082/api/v1/contas/$ACCOUNT_ID/saldo" \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "em=$CREDIT_REGISTERED_AT"
+
+curl -sS "http://localhost:5082/api/v1/contas/$ACCOUNT_ID/extrato?pagina=1&tamanho=1" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+No exemplo histórico, defina `CREDIT_REGISTERED_AT` com o horário retornado pelo crédito. Para consolidar as contas projetadas do cliente autenticado, use `GET /api/v1/clientes/me/saldo`. Se esse cliente já tiver outras contas com saldo, o consolidado não será apenas o saldo desta conta de teste.
+
+### 5. Rejeitar débito sem saldo
+
+Com saldo 70, envie uma chave nova, `insufficient-funds-001`, e:
+
+```json
+{
+  "tipo": "Debito",
+  "valor": 1000,
+  "descricao": "Tentativa sem saldo suficiente"
+}
+```
+
+Espere `409`. Saldo e extrato não mudam; a sequência continua 2. Uma falha de regra não vira resposta idempotente de sucesso.
+
+### 6. Estornar o débito e preservar o histórico
+
+Na Ledger.Api, execute `POST /api/v1/contas/{contaId}/lancamentos/{lancamentoId}/estorno`, usando o **ID do débito de 30**, com `Idempotency-Key: reversal-test-001`:
+
+```json
+{
+  "motivo": "Estorno do debito de teste"
+}
+```
+
+Espere `201`, um novo ID, `type: 1`, `amount: 30`, `sequence: 3` e `reversalOf` igual ao ID do débito. Depois do processamento, saldo 100 e `lastSequence: 3`. O extrato mantém crédito, débito e compensação; o débito original não desaparece.
+
+| Tentativa de estorno | Resultado esperado |
+|---|---|
+| Mesmo original, body e chave | Mesmo `201` e corpo; saldo permanece 100 |
+| Mesmo original com outra chave, `reversal-test-002` | `409`: original já estornada |
+| Usar o ID da compensação como original, com chave nova | `409`: estorno de estorno proibido |
+| Alterar o motivo com a chave original | `422`: conteúdo diferente |
+| Adicionar `valor` ou `tipo` ao body do estorno, com chave nova | `400`: campos não aceitos; não há estorno parcial |
+
+Para testar a exigência de fundos no estorno de crédito, prefira outra conta: credite 100, debite 80 e tente estornar o crédito de 100 com chave nova. Espere `409`, saldo 20 e nenhum lançamento compensatório. Isso evita alterar a sequência do roteiro principal.
+
+### 7. Validação e autenticação
+
+No endpoint de lançamentos, use uma chave nova para cada tentativa abaixo:
+
+| Body/condição | Resultado |
+|---|---|
+| `{"tipo":"Credito","valor":0,"descricao":"Valor zero"}` | `400` |
+| `{"tipo":"Debito","valor":-1,"descricao":"Negativo"}` | `400` |
+| `{"tipo":"Credito","valor":10.12345,"descricao":"Cinco casas"}` | `400` |
+| `{"tipo":"Creditoooo","valor":10,"descricao":"Tipo invalido"}` | `400` |
+| `{"tipo":"Credito","valor":10,"descricao":""}` | `400` |
+| Body válido sem `Idempotency-Key` | `400` |
+| Requisição protegida sem token ou com token expirado | `401` |
+| Token válido sem o escopo exigido | `403` |
+| Conta que não pertence ao `sub` autenticado | `404` |
+
+Até quatro casas são permitidas: `10.1234` é válido, diferentemente da v1, que admite até duas. Se registrar esse crédito, use outra conta ou recalcule os saldos esperados do roteiro. O token demo já contém os dois escopos; testar `403` exige outro token válido com escopos restritos, não apenas editar o JWT.
+
+### 8. Ver a fila e demonstrar leitura eventual
+
+Abra http://localhost:15673 com `bank` / `local-demo-rabbit-only` (ou a senha sobrescrita no ambiente). Em **Queues and Streams**, inspecione:
+
+- `bank.balance.v1`: fila consumida pelo worker.
+- `bank.balance.dead.v1`: mensagens inválidas ou com falhas repetidas.
+
+Uma fila vazia é normal com consumidor ativo. Para enxergar o acúmulo, no terminal da v2 pare somente o worker:
+
+```sh
+docker compose stop balance-worker
+```
+
+No endpoint de lançamentos, use `Idempotency-Key: messaging-test-001` e:
+
+```json
+{
+  "tipo": "Credito",
+  "valor": 5,
+  "descricao": "Teste de mensageria"
+}
+```
+
+Espere `201` e `sequence: 4`. Após a publicação, a fila principal deve mostrar a mensagem em **Ready**, enquanto a leitura continua em 100/seq. 3. Isso pressupõe os passos anteriores, sem outras movimentações.
+
+Reinicie o consumidor:
+
+```sh
+docker compose start balance-worker
+docker compose logs -f ledger-api balance-worker
+```
+
+A fila deve drenar, e a leitura alcançar saldo 105/seq. 4. Não use **Get messages** para consumir/rejeitar manualmente a mensagem durante esse teste, pois isso interfere no fluxo.
+
+### 9. Falha do broker e recuperação via Outbox
+
+Com o worker novamente ativo, pare apenas o broker:
+
+```sh
+docker compose stop rabbitmq
+```
+
+Envie outro crédito de 5 no endpoint de lançamentos, com chave nova `broker-outage-test-001`:
+
+```json
+{
+  "tipo": "Credito",
+  "valor": 5,
+  "descricao": "Credito durante indisponibilidade do broker"
+}
+```
+
+Espere `201` e `sequence: 5`: o saldo autoritativo foi confirmado e o evento ficou na Outbox. O painel do RabbitMQ ficará indisponível enquanto o broker estiver parado, e a leitura pode continuar em 105/seq. 4.
+
+```sh
+docker compose start rabbitmq
+```
+
+Após a recuperação e as novas tentativas do publicador/consumidor, espere saldo 110/seq. 5. Não repita o crédito com outra chave para tentar acelerar a leitura; isso criaria outra operação. Pare o acompanhamento de logs com Ctrl+C, sem parar os serviços.
+
+### 10. Concorrência e reentrega: testes automatizados
+
+As propriedades que exigem simultaneidade são verificadas pela suíte de integração com banco e broker reais:
+
+- 50 requisições com a mesma chave produzem exatamente um lançamento; respostas em disputa podem retornar `409` para retry.
+- 100 débitos de 1 sobre saldo 50 aprovam 50 operações; o saldo final fica zero e igual à soma do ledger.
+- Reentregar um evento não altera o saldo duas vezes.
+- Eventos fora de ordem não fazem a leitura avançar sobre uma lacuna.
+
+Para executar apenas a integração, com SDK .NET e Docker disponíveis:
+
+```sh
+dotnet test tests/Financial.IntegrationTests -c Release
+```
+
+Os saldos deste roteiro são expectativas condicionadas à conta nova e à sequência indicada; não são evidência de que os testes foram executados no seu ambiente. A evidência automatizada da entrega está em [docs/validation.md](docs/validation.md).
+
 ## Testes
 
 Com SDK .NET 10.0.403 e Docker funcionando:
@@ -194,3 +441,4 @@ Excluir o volume de chaves isoladamente pode tornar os textos criptografados ile
 Particionamento temporal do ledger, snapshots e arquivamento medidos por volume; processo formal de reconciliação e reparação de projeções; testes de caos e SLOs de atraso; segregação de usuários/runtime e banco por contexto; PostgreSQL e RabbitMQ replicados; backup/PITR e ensaios de DR/multi-região; KMS/HSM e criptografia de chaves com rotação auditada; automação de governança de eventos.
 
 Event Sourcing e Kafka são alternativas a avaliar com requisitos concretos de replay, volume e consumidores. Não foram incluídos por prestígio tecnológico. O ledger atual não representa contabilidade de partidas dobradas: não há plano de contas, balanço contábil nem integração de liquidação. É uma implementação técnica demonstrável, não um core bancário certificado e pronto para produção.
+
