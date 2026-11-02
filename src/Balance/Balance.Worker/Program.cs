@@ -7,5 +7,5 @@ using Microsoft.Extensions.Hosting;
 using Npgsql;
 using ServiceDefaults;
 var builder=Host.CreateApplicationBuilder(args);builder.ConfigureTelemetry("Balance.Worker");
-builder.Services.AddSingleton(NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Bank")??throw new InvalidOperationException("Bank connection required.")));
+builder.Services.AddSingleton(NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Bank")??throw new InvalidOperationException("Bank connection required.")){MaxPoolSize=builder.Configuration.GetValue<int?>("Database:MaximumPoolSize")??20}.ConnectionString));
 builder.Services.AddSingleton<IProjectionWriter,ProjectionWriter>();builder.Services.AddHostedService<ProjectionConsumer>();await builder.Build().RunAsync();
