@@ -26,8 +26,8 @@ if(settings is not null)
 builder.AddBankApi("Ledger.Api");
 builder.Services.AddControllers().AddJsonOptions(o=>{o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter<EntryKind>(allowIntegerValues:false));o.JsonSerializerOptions.RespectRequiredConstructorParameters=true;});
 string Connection()=>builder.Configuration.GetConnectionString("Bank")??throw new InvalidOperationException("ConnectionStrings__Bank is required.");
-builder.Services.AddSingleton(_=>NpgsqlDataSource.Create(Connection()));
-builder.Services.AddDbContextFactory<LedgerDbContext>(o=>o.UseNpgsql(Connection()));
+builder.Services.AddSingleton(_=>NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(Connection()){MaxPoolSize=builder.Configuration.GetValue<int?>("Database:MaximumPoolSize")??40}.ConnectionString));
+builder.Services.AddDbContextFactory<LedgerDbContext>((services,o)=>o.UseNpgsql(services.GetRequiredService<NpgsqlDataSource>()));
 builder.Services.AddDataProtection().SetApplicationName("DigitalBank.Ledger").PersistKeysToFileSystem(new DirectoryInfo(builder.Configuration["Protection:KeyPath"]??Path.Combine(Path.GetTempPath(),"digital-bank-keys")));
 builder.Services.AddScoped<ILedgerSession,LedgerSession>();builder.Services.AddScoped<RegisterEntryHandler>();builder.Services.AddScoped<ReverseEntryHandler>();builder.Services.AddScoped<IdempotencyFilter>();
 if(builder.Configuration.GetValue<bool>("Messaging:Enabled"))builder.Services.AddHostedService<OutboxPublisher>();
