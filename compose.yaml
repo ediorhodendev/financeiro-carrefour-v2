@@ -1,0 +1,99 @@
+name: financeiro-carrefour-v2
+services:
+  postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-postgres-only}
+    volumes: [bank_data:/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4.4.0-management
+    environment:
+      RABBITMQ_DEFAULT_USER: bank
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-local-demo-rabbit-only}
+    volumes: [rabbit_data:/var/lib/rabbitmq]
+    ports: ["127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15673}:15672"]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  migrations:
+    build: &ledger-build
+      context: .
+      args:
+        PROJECT: src/Ledger/Ledger.Api/Ledger.Api.csproj
+        APP_DLL: Ledger.Api.dll
+    user: "0"
+    environment: &ledger-env
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Bank: Host=postgres;Database=bank;Username=bank;Password=${POSTGRES_PASSWORD:-local-demo-postgres-only}
+      Demo__Enabled: "true"
+      DEMO_SETTINGS_PATH: /run/bank/settings.json
+      Protection__KeyPath: /run/bank/keys
+      Messaging__Enabled: "false"
+      Messaging__Host: rabbitmq
+      Messaging__User: bank
+      Messaging__Password: ${RABBITMQ_PASSWORD:-local-demo-rabbit-only}
+    volumes: [demo_keys:/run/bank]
+    entrypoint: [/bin/sh, -ec]
+    command: ["dotnet Ledger.Api.dll --migrate && chown -R 1654:1654 /run/bank"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  ledger-api:
+    build: *ledger-build
+    environment:
+      <<: *ledger-env
+      Messaging__Enabled: "true"
+    volumes: [demo_keys:/run/bank]
+    ports: ["127.0.0.1:${LEDGER_PORT:-5081}:8080"]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  balance-api:
+    build:
+      context: .
+      args:
+        PROJECT: src/Balance/Balance.Api/Balance.Api.csproj
+        APP_DLL: Balance.Api.dll
+    environment: *ledger-env
+    volumes: [demo_keys:/run/bank:ro]
+    ports: ["127.0.0.1:${BALANCE_PORT:-5082}:8080"]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  balance-worker:
+    build:
+      context: .
+      args:
+        PROJECT: src/Balance/Balance.Worker/Balance.Worker.csproj
+        APP_DLL: Balance.Worker.dll
+    environment: *ledger-env
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+  tests:
+    profiles: [tests]
+    build:
+      context: .
+      target: tests
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    environment:
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts: ["host.docker.internal:host-gateway"]
+volumes:
+  bank_data:
+  rabbit_data:
+  demo_keys:

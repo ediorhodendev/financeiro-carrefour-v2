@@ -1,0 +1,25 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Balance/">
+    <Project Path="src/Balance/Balance.Api/Balance.Api.csproj" />
+    <Project Path="src/Balance/Balance.Application/Balance.Application.csproj" />
+    <Project Path="src/Balance/Balance.Domain/Balance.Domain.csproj" />
+    <Project Path="src/Balance/Balance.Infrastructure/Balance.Infrastructure.csproj" />
+    <Project Path="src/Balance/Balance.Worker/Balance.Worker.csproj" />
+  </Folder>
+  <Folder Name="/src/Ledger/">
+    <Project Path="src/Ledger/Ledger.Api/Ledger.Api.csproj" />
+    <Project Path="src/Ledger/Ledger.Application/Ledger.Application.csproj" />
+    <Project Path="src/Ledger/Ledger.Domain/Ledger.Domain.csproj" />
+    <Project Path="src/Ledger/Ledger.Infrastructure/Ledger.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/Integration.Contracts/Integration.Contracts.csproj" />
+    <Project Path="src/Shared/Messaging.Transport/Messaging.Transport.csproj" />
+    <Project Path="src/Shared/ServiceDefaults/ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Financial.IntegrationTests/Financial.IntegrationTests.csproj" />
+    <Project Path="tests/Ledger.Domain.Tests/Ledger.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
