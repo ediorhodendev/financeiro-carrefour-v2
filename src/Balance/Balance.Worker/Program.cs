@@ -1,0 +1,11 @@
+using Balance.Application;
+using Balance.Infrastructure;
+using Balance.Worker;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Npgsql;
+using ServiceDefaults;
+var builder=Host.CreateApplicationBuilder(args);builder.ConfigureTelemetry("Balance.Worker");
+builder.Services.AddSingleton(NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Bank")??throw new InvalidOperationException("Bank connection required.")));
+builder.Services.AddSingleton<IProjectionWriter,ProjectionWriter>();builder.Services.AddHostedService<ProjectionConsumer>();await builder.Build().RunAsync();
