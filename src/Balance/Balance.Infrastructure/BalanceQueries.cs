@@ -6,6 +6,7 @@ namespace Balance.Infrastructure;
 
 public sealed class BalanceQueries(NpgsqlDataSource source,TimeProvider clock) : IBalanceQueries
 {
+ static BalanceQueries()=>UtcInstantMapping.Configure();
  public async Task<BalanceResult?> GetAsync(Guid account,string customer,DateTimeOffset? at,CancellationToken ct)
  {
     ValidateTime(at);

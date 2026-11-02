@@ -7,6 +7,7 @@ namespace Balance.Infrastructure;
 
 public sealed class ProjectionWriter(NpgsqlDataSource source) : IProjectionWriter
 {
+ static ProjectionWriter()=>UtcInstantMapping.Configure();
  public async Task ApplyAsync(EntryRecorded message,CancellationToken ct)
  {
     message.Validate();
