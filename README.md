@@ -161,7 +161,7 @@ docker compose --profile tests run --build --rm tests
 
 Esse perfil monta o socket Docker para Testcontainers; use apenas em ambiente de desenvolvimento confiável. O GitHub Actions executa testes no host e um smoke test dos três processos no Compose, incluindo indisponibilidade e recuperação do broker.
 
-Os testes cobrem precisão monetária, limite de saldo, estorno, hashes, replay exato, payload conflitante, 50 chamadas com a mesma chave, 100 débitos concorrentes, imutabilidade, criptografia de texto, reentrega, eventos fora de ordem, snapshot e consultas HTTP. Os resultados efetivamente executados ficam no CI; este README não atribui aprovação a uma execução ainda pendente.
+Os testes cobrem precisão monetária, limite de saldo, estorno, hashes, replay exato, payload conflitante, 50 chamadas com a mesma chave, 100 débitos concorrentes, imutabilidade, criptografia de texto, reentrega, eventos fora de ordem, snapshot e consultas HTTP. A execução de entrega aprovou 20 testes unitários e 12 de integração, além do smoke test no Compose, com build sem erros nem warnings. Veja a [evidência de validação](docs/validation.md).
 
 ## Atualizar, parar ou zerar
 
