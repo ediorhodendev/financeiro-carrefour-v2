@@ -10,12 +10,12 @@ namespace Ledger.Api.Controllers;
 public enum EntryKind { Credito=1, Debito=2 }
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record EntryRequest(
-    [property:JsonPropertyName("tipo"),Required] EntryKind Type,
+    [property:JsonPropertyName("tipo")][Required] EntryKind Type,
     [property:JsonPropertyName("valor")] decimal Amount,
-    [property:JsonPropertyName("descricao"),Required,StringLength(500,MinimumLength=1)] string Description,
-    [property:JsonPropertyName("referenciaExterna"),StringLength(128)] string? ExternalReference=null);
+    [property:JsonPropertyName("descricao")][Required,StringLength(500,MinimumLength=1)] string Description,
+    [property:JsonPropertyName("referenciaExterna")][StringLength(128)] string? ExternalReference=null);
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record ReversalRequest([property:JsonPropertyName("motivo"),Required,StringLength(500,MinimumLength=1)] string Reason);
+public sealed record ReversalRequest([property:JsonPropertyName("motivo")][Required,StringLength(500,MinimumLength=1)] string Reason);
 
 [ApiController]
 [Route("api/v1/contas/{contaId:guid}/lancamentos")]
