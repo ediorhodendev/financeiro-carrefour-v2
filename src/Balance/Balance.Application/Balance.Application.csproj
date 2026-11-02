@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Balance.Domain/Balance.Domain.csproj" /><ProjectReference Include="../../Shared/Integration.Contracts/Integration.Contracts.csproj" /></ItemGroup></Project>
