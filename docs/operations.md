@@ -21,3 +21,7 @@ Compare saldo autoritativo com soma assinada do ledger e com a projeção na mes
 ## Limitações temporais
 
 Histórico por registro confirmado visível, sem backdating. Snapshot a cada 100 registros contíguos. A perda do key ring impede leitura de textos protegidos. Chaves idempotentes expiram após 48h; retries fora da janela não têm deduplicação garantida. Referência externa não é deduplicação permanente.
+
+## Orçamento de conexões
+
+Ledger compartilha um único NpgsqlDataSource entre EF e Outbox, com máximo de 40 conexões. Balance.Api e Balance.Worker usam até 20 cada: orçamento de 80 para uma instância de cada processo, deixando reserva no PostgreSQL padrão. Requisições excedentes aguardam o pool em vez de abrir uma conexão por chamada. Antes de aumentar réplicas, recalcule o orçamento global e ajuste Database__MaximumPoolSize por processo, filas, timeouts e limite de conexões do servidor. A integração executa 100 débitos paralelos sem elevar max_connections para esconder o problema.
