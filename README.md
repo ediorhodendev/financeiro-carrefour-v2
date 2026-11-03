@@ -4,6 +4,26 @@ Desafio de ledger financeiro em C# 14 / .NET 10, desenvolvido para demonstrar de
 
 Não substitui nem altera o projeto financeiro-carrefour anterior.
 
+## Frontend Angular disponível
+
+A versão 2 também pode ser testada pela interface em **Angular 22**, disponível em um repositório separado:
+
+**Frontend:** [financeiro-carrefour-web](https://github.com/ediorhodendev/financeiro-carrefour-web)
+
+O painel permite registrar créditos e débitos, consultar saldo atual e histórico, navegar no extrato, realizar estorno integral e acompanhar a mensageria com métricas do RabbitMQ e o avanço da projeção de saldo.
+
+Com este backend já rodando no Docker, execute em outro terminal, na pasta onde deseja clonar o frontend:
+
+```sh
+git clone https://github.com/ediorhodendev/financeiro-carrefour-web.git
+cd financeiro-carrefour-web
+docker compose up -d --build --wait
+```
+
+Abra **http://localhost:4200** e clique em **Conectar ambiente** para obter o acesso demonstrativo. Não é necessário parar o backend nem instalar Angular ou Node localmente.
+
+O frontend utiliza a rede Docker `financeiro-carrefour-v2_default`. Se você personalizou a senha do RabbitMQ, configure a mesma senha no `.env` do frontend para habilitar as métricas. Os comandos de execução, exemplos de testes e detalhes da integração estão no [README do frontend](https://github.com/ediorhodendev/financeiro-carrefour-web#readme).
+
 ## Por que esta arquitetura foi escolhida
 
 A v2 separa **correção financeira** de **distribuição dos dados para leitura**. O Ledger autoriza os débitos usando seu saldo transacional; o Balance oferece consultas sem participar da decisão de gastar. Assim, o processamento assíncrono pode atrasar sem permitir um débito com base em saldo desatualizado.
@@ -441,4 +461,5 @@ Excluir o volume de chaves isoladamente pode tornar os textos criptografados ile
 Particionamento temporal do ledger, snapshots e arquivamento medidos por volume; processo formal de reconciliação e reparação de projeções; testes de caos e SLOs de atraso; segregação de usuários/runtime e banco por contexto; PostgreSQL e RabbitMQ replicados; backup/PITR e ensaios de DR/multi-região; KMS/HSM e criptografia de chaves com rotação auditada; automação de governança de eventos.
 
 Event Sourcing e Kafka são alternativas a avaliar com requisitos concretos de replay, volume e consumidores. Não foram incluídos por prestígio tecnológico. O ledger atual não representa contabilidade de partidas dobradas: não há plano de contas, balanço contábil nem integração de liquidação. É uma implementação técnica demonstrável, não um core bancário certificado e pronto para produção.
+
 
